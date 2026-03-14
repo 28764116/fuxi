@@ -73,3 +73,7 @@ dist-ssr/
 
 # ===== Docs =====
 docs/
+
+# ===== Uploads =====
+backend/uploads/
+uploads/
