@@ -37,6 +37,7 @@ class EntityResponse(BaseModel):
     group_id: str
     name: str
     entity_type: str
+    display_name: str | None = None  # 原始名称，用于前端展示
     summary: str | None = None
     created_at: datetime
     updated_at: datetime

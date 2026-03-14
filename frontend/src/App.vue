@@ -1,247 +1,295 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
-import GraphView from './components/GraphView.vue'
-import { uploadFile, getEntities, getAllEdges, ingestText } from './api'
-import type { Entity, EntityEdge, Episode } from './api'
+import { useRoute } from 'vue-router'
+import { ref, computed } from 'vue'
+import ToastContainer from './components/ToastContainer.vue'
 
-const GROUP_ID = 'test-group'
-const THREAD_ID = '22222222-2222-2222-2222-222222222222'
+const route = useRoute()
+const sidebarCollapsed = ref(false)
 
-const entities = ref<Entity[]>([])
-const edges = ref<EntityEdge[]>([])
-const episodes = ref<Episode[]>([])
+const isHome = computed(() => route.name === 'home')
 
-const textInput = ref('')
-const loading = ref(false)
-const status = ref('')
-const pollTimer = ref<number | null>(null)
-
-async function refreshGraph() {
-  status.value = '正在加载图谱...'
-  try {
-    entities.value = await getEntities(GROUP_ID)
-    edges.value = await getAllEdges(GROUP_ID)
-    status.value = `图谱已加载: ${entities.value.length} 个实体, ${edges.value.filter(e => !e.expired_at).length} 条关系`
-  } catch (e: any) {
-    status.value = '加载失败: ' + (e.message || e)
-  }
-}
-
-function startPolling() {
-  if (pollTimer.value) return
-  let count = 0
-  pollTimer.value = window.setInterval(async () => {
-    count++
-    status.value = `等待处理中... (${count * 5}s)`
-    await refreshGraph()
-    if (count >= 12) {
-      // Stop after 60s
-      stopPolling()
-      status.value += ' (轮询结束)'
-    }
-  }, 5000)
-}
-
-function stopPolling() {
-  if (pollTimer.value) {
-    clearInterval(pollTimer.value)
-    pollTimer.value = null
-  }
-}
-
-async function handleFileUpload(event: Event) {
-  const target = event.target as HTMLInputElement
-  if (!target.files?.length) return
-  const file = target.files[0]
-
-  loading.value = true
-  status.value = `正在上传 ${file.name}...`
-  try {
-    const eps = await uploadFile(GROUP_ID, THREAD_ID, file)
-    episodes.value = eps
-    status.value = `上传成功: ${eps.length} 个文档片段已入库，等待 Celery 处理...`
-    startPolling()
-  } catch (e: any) {
-    status.value = '上传失败: ' + (e.response?.data?.detail || e.message)
-  } finally {
-    loading.value = false
-    target.value = ''
-  }
-}
-
-async function handleTextSubmit() {
-  if (!textInput.value.trim()) return
-  loading.value = true
-  status.value = '正在提交...'
-  try {
-    const ep = await ingestText(GROUP_ID, THREAD_ID, textInput.value.trim())
-    episodes.value.push(ep)
-    status.value = '提交成功，等待 Celery 处理...'
-    textInput.value = ''
-    startPolling()
-  } catch (e: any) {
-    status.value = '提交失败: ' + (e.response?.data?.detail || e.message)
-  } finally {
-    loading.value = false
-  }
-}
-
-// Initial load
-refreshGraph()
+const navItems = [
+  { path: '/', name: 'home', label: '首页', icon: 'home' },
+]
 </script>
 
 <template>
-  <div class="app">
-    <header>
-      <h1>Fuxi 知识图谱</h1>
-      <p class="subtitle">上传文档或输入文本，自动提取实体关系并可视化</p>
-    </header>
-
-    <div class="controls">
-      <div class="upload-section">
-        <label class="upload-btn" :class="{ disabled: loading }">
-          📄 上传文档
-          <input type="file" accept=".pdf,.txt,.md,.json,.csv" @change="handleFileUpload" :disabled="loading" hidden />
-        </label>
-        <span class="hint">支持 PDF / TXT / MD / JSON / CSV</span>
-      </div>
-
-      <div class="text-section">
-        <textarea
-          v-model="textInput"
-          placeholder="或直接输入文本内容..."
-          rows="3"
-          :disabled="loading"
-        ></textarea>
-        <button @click="handleTextSubmit" :disabled="loading || !textInput.trim()" class="submit-btn">
-          提交
+  <div class="app-layout" :class="{ 'no-sidebar': isHome }">
+    <!-- Sidebar -->
+    <aside v-if="!isHome" class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+      <div class="sidebar-header">
+        <router-link to="/" class="logo">
+          <span class="logo-icon">F</span>
+          <span v-if="!sidebarCollapsed" class="logo-text">Fuxi</span>
+        </router-link>
+        <button v-if="!sidebarCollapsed" class="collapse-btn" @click="sidebarCollapsed = true">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8l4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button v-else class="collapse-btn" @click="sidebarCollapsed = false">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 12l4-4-4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
       </div>
 
-      <div class="actions">
-        <button @click="refreshGraph" :disabled="loading" class="refresh-btn">刷新图谱</button>
-        <span class="status" v-if="status">{{ status }}</span>
+      <nav class="sidebar-nav">
+        <router-link
+          v-for="item in navItems"
+          :key="item.name"
+          :to="item.path"
+          class="nav-item"
+          :class="{ active: route.name === item.name }"
+        >
+          <!-- Icons -->
+          <svg v-if="item.icon === 'home'" class="nav-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M3 10l7-7 7 7M5 8.5V16a1 1 0 001 1h3v-4h2v4h3a1 1 0 001-1V8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <svg v-else-if="item.icon === 'graph'" class="nav-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="4" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="4" cy="14" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+            <circle cx="16" cy="14" r="2.5" stroke="currentColor" stroke-width="1.5"/>
+            <path d="M8.5 6l-3 6M11.5 6l3 6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <svg v-else-if="item.icon === 'knowledge'" class="nav-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <path d="M10 2L2 6l8 4 8-4-8-4zM2 10l8 4 8-4M2 14l8 4 8-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <svg v-else-if="item.icon === 'live'" class="nav-icon" width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <circle cx="10" cy="10" r="3" fill="currentColor"/>
+            <path d="M10 3v2M10 15v2M3 10h2M15 10h2M5.75 5.75l1.5 1.5M12.75 12.75l1.5 1.5M5.75 14.25l1.5-1.5M12.75 7.25l1.5-1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          <span v-if="!sidebarCollapsed" class="nav-label">{{ item.label }}</span>
+        </router-link>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div v-if="route.name === 'project' && !sidebarCollapsed" class="project-badge">
+          <span class="project-label">当前项目</span>
+          <span class="project-id">{{ (route.params.id as string)?.slice(0, 8) }}...</span>
+        </div>
+        <div class="version-badge" :class="{ mini: sidebarCollapsed }">
+          {{ sidebarCollapsed ? 'v0.1' : 'Fuxi v0.1-preview' }}
+        </div>
       </div>
-    </div>
+    </aside>
 
-    <div class="graph-section">
-      <GraphView :entities="entities" :edges="edges" />
-    </div>
+    <!-- Main Content -->
+    <main class="main-content" :class="{ 'with-sidebar': !isHome, 'sidebar-collapsed': !isHome && sidebarCollapsed }">
+      <router-view v-slot="{ Component }">
+        <transition name="page-fade" mode="out-in">
+          <component :is="Component" />
+        </transition>
+      </router-view>
+    </main>
 
-    <div class="legend">
-      <span class="legend-item"><i style="background:#5B8FF9"></i> 人物</span>
-      <span class="legend-item"><i style="background:#F6BD16"></i> 组织</span>
-      <span class="legend-item"><i style="background:#5AD8A6"></i> 地点</span>
-      <span class="legend-item"><i style="background:#945FB9"></i> 概念</span>
-      <span class="legend-item"><i style="background:#FF6B3B"></i> 事件</span>
-      <span class="legend-item"><i style="background:#269A99"></i> 产品</span>
-    </div>
+    <!-- Toast Notifications -->
+    <ToastContainer />
   </div>
 </template>
 
 <style scoped>
-.app {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+.app-layout {
+  display: flex;
+  min-height: 100vh;
 }
-header {
-  margin-bottom: 24px;
-}
-h1 {
-  font-size: 24px;
-  margin: 0;
-  color: #1a1a1a;
-}
-.subtitle {
-  color: #666;
-  font-size: 14px;
-  margin: 4px 0 0;
-}
-.controls {
+
+/* ===== Sidebar ===== */
+.sidebar {
+  width: var(--sidebar-width);
+  height: 100vh;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 50;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  margin-bottom: 20px;
+  background: var(--bg-sidebar);
+  border-right: 1px solid var(--border-secondary);
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-sm);
 }
-.upload-section {
+
+.sidebar.collapsed {
+  width: var(--sidebar-collapsed);
+}
+
+.sidebar-header {
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  height: var(--header-height);
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-secondary);
+  flex-shrink: 0;
 }
-.upload-btn {
-  display: inline-block;
-  padding: 8px 16px;
-  background: #1677ff;
-  color: #fff;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  transition: background 0.2s;
-}
-.upload-btn:hover { background: #4096ff; }
-.upload-btn.disabled { background: #ccc; cursor: not-allowed; }
-.hint { color: #999; font-size: 12px; }
-.text-section {
+
+.logo {
   display: flex;
-  gap: 8px;
-  align-items: flex-end;
+  align-items: center;
+  gap: var(--space-2);
+  text-decoration: none;
+  color: var(--text-primary);
 }
-textarea {
-  flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 14px;
-  resize: vertical;
-  font-family: inherit;
+
+.logo-icon {
+  width: 32px;
+  height: 32px;
+  background: var(--primary);
+  color: white;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+  flex-shrink: 0;
 }
-textarea:focus { outline: none; border-color: #1677ff; }
-.submit-btn {
-  padding: 8px 20px;
-  background: #1677ff;
-  color: #fff;
+
+.logo-text {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+}
+
+.collapse-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
   border: none;
-  border-radius: 6px;
-  cursor: pointer;
+  border-radius: var(--radius-sm);
+  color: var(--text-quaternary);
+}
+
+.collapse-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* Nav */
+.sidebar-nav {
+  flex: 1;
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  color: var(--text-tertiary);
+  text-decoration: none;
   font-size: 14px;
-  height: fit-content;
+  font-weight: 500;
+  transition: all var(--transition-fast);
 }
-.submit-btn:hover { background: #4096ff; }
-.submit-btn:disabled { background: #ccc; cursor: not-allowed; }
-.actions {
+
+.sidebar.collapsed .nav-item {
+  justify-content: center;
+  padding: var(--space-2);
+}
+
+.nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nav-item.active {
+  background: var(--bg-active);
+  color: var(--primary);
+}
+
+.nav-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.nav-label {
+  white-space: nowrap;
+  overflow: hidden;
+  opacity: 1;
+  transition: opacity 0.2s ease;
+}
+
+.sidebar.collapsed .nav-label {
+  opacity: 0;
+}
+
+/* Footer */
+.sidebar-footer {
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-secondary);
+  flex-shrink: 0;
+}
+
+.project-badge {
   display: flex;
-  align-items: center;
-  gap: 12px;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+  padding: var(--space-2);
+  background: var(--gray-50);
+  border-radius: var(--radius-sm);
 }
-.refresh-btn {
-  padding: 6px 14px;
-  background: #fff;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 13px;
+
+.project-label {
+  font-size: 10px;
+  color: var(--text-quaternary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
-.refresh-btn:hover { border-color: #1677ff; color: #1677ff; }
-.status { color: #666; font-size: 13px; }
-.graph-section { margin-bottom: 16px; }
-.legend {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+
+.project-id {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-tertiary);
 }
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  color: #666;
+
+.version-badge {
+  padding: var(--space-1) var(--space-2);
+  background: var(--gray-50);
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  color: var(--text-quaternary);
+  text-align: center;
 }
-.legend-item i {
-  display: inline-block;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
+
+/* ===== Main ===== */
+.main-content {
+  flex: 1;
+  min-height: 100vh;
+}
+
+.main-content.with-sidebar {
+  margin-left: var(--sidebar-width);
+  transition: margin-left var(--transition-normal);
+}
+
+.main-content.sidebar-collapsed {
+  margin-left: var(--sidebar-collapsed);
+}
+
+/* Page transition */
+.page-fade-enter-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.page-fade-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.page-fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.page-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 </style>

@@ -14,6 +14,7 @@ from app.database import Base
 # Import models so they register with Base.metadata
 import memory.models  # noqa: F401
 import simulation.models  # noqa: F401
+# sim_reports 依赖 sim_worldlines，需确保 simulation.models 已导入
 
 
 async def init_db() -> None:
@@ -32,6 +33,21 @@ async def init_db() -> None:
         await conn.execute(text("""
             CREATE INDEX IF NOT EXISTS idx_entities_embedding
             ON entities USING hnsw (summary_embedding vector_cosine_ops)
+        """))
+        # sim_agents: 按任务 + 影响力排序（推演主循环高频查询）
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sim_agents_task_influence
+            ON sim_agents (task_id, influence_weight DESC)
+        """))
+        # sim_worldline_events: 按世界线 + 步骤顺序（时间轴渲染）
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sim_events_worldline_step
+            ON sim_worldline_events (worldline_id, step_index ASC)
+        """))
+        # sim_checkpoints: 按世界线 + agent + 步骤（状态恢复）
+        await conn.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_sim_checkpoints_lookup
+            ON sim_checkpoints (worldline_id, agent_id, step_index DESC)
         """))
 
     await engine.dispose()

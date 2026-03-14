@@ -29,14 +29,24 @@ def publish_progress(
     progress: int,
     message: str = "",
     error: str | None = None,
+    worldline_id: str | None = None,
+    latest_event: dict | None = None,
 ) -> None:
-    """Publish task progress to Redis channel."""
+    """Publish task progress to Redis channel.
+
+    Payload fields:
+      task_id, status, progress, message, error,
+      worldline_id (当前推演中的世界线 ID，可选),
+      latest_event  (最新事件摘要，可选)
+    """
     payload = {
         "task_id": task_id,
         "status": status,
         "progress": progress,
         "message": message,
         "error": error,
+        "worldline_id": worldline_id,
+        "latest_event": latest_event,
     }
     channel = f"sim:progress:{task_id}"
     try:
