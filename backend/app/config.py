@@ -1,14 +1,16 @@
 from pydantic import computed_field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    # PostgreSQL（从独立字段组装 database_url）
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    
+    # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
     postgres_user: str = "postgres"
     postgres_password: str = "postgres"
-    postgres_db: str = "mirofish"
+    postgres_db: str = "fuxi"
 
     @computed_field
     @property
@@ -21,6 +23,12 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://localhost:6379/0"
 
+    # Neo4j 图数据库
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = ""
+    neo4j_database: str = "neo4j"
+
     # LLM
     llm_api_key: str = ""
     llm_base_url: str = "https://api.minimaxi.com/v1"
@@ -32,14 +40,24 @@ class Settings(BaseSettings):
     embedding_base_url: str = "https://api.minimaxi.com/v1"
     embedding_dimension: int = 1536
 
+    # 向量搜索
+    vector_search_top_k: int = 5
+
+    # 文件上传
+    max_content_length: int = 50 * 1024 * 1024  # 50MB
+    upload_folder: str = "uploads"
+    allowed_extensions: set = {"pdf", "md", "txt", "markdown"}
+
+    # 文本处理
+    default_chunk_size: int = 800
+    default_chunk_overlap: int = 100
+
     # Context assembly
-    context_max_tokens: int = 4000  # token budget for assembled context
+    context_max_tokens: int = 4000
 
     # App
     app_env: str = "development"
-    api_key: str = ""  # empty = skip auth (dev mode)
-
-    model_config = {"env_file": "../.env", "env_file_encoding": "utf-8", "extra": "ignore"}
+    api_key: str = ""
 
 
 settings = Settings()

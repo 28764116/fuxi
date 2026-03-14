@@ -10,7 +10,7 @@ from memory.models import Entity, EntityEdge, Episode
 from memory.schemas import EpisodeCreate
 
 
-async def ingest_episode(session: AsyncSession, data: EpisodeCreate) -> Episode:
+async def ingest_episode(session: AsyncSession, data: EpisodeCreate, language: str = "zh") -> Episode:
     episode = Episode(
         group_id=data.group_id,
         thread_id=data.thread_id,
@@ -23,41 +23,20 @@ async def ingest_episode(session: AsyncSession, data: EpisodeCreate) -> Episode:
     await session.commit()
     await session.refresh(episode)
 
-    # Push to Celery for async processing
+    # Push to Celery for async processing (传递语言偏好)
     from worker import celery_app
 
-    celery_app.send_task("memory.process_episode", args=[str(episode.id)])
+    celery_app.send_task("memory.process_episode", args=[str(episode.id), language])
 
     return episode
 
 
-# --- Entity dedup (sync, for Celery tasks) ---
-
-
-def get_or_create_entity(
-    session: Session, group_id: str, name: str, entity_type: str
-) -> Entity:
-    """Find an existing entity by normalized name within a group, or create a new one."""
-    normalized_name = name.strip().lower()
-    stmt = select(Entity).where(
-        Entity.group_id == group_id,
-        Entity.name == normalized_name,
-    )
-    entity = session.execute(stmt).scalars().first()
-    if entity:
-        return entity
-
-    entity = Entity(
-        group_id=group_id,
-        name=normalized_name,
-        entity_type=entity_type,
-    )
-    session.add(entity)
-    session.flush()
-    return entity
+# --- DEPRECATED: Entity dedup functions (migrated to Neo4j) ---
+# These functions are no longer used. Use Neo4jGraphService instead.
 
 
 # --- Semantic search (async, for API) ---
+# TODO: Migrate to Neo4j vector search
 
 
 async def search_edges(
@@ -67,7 +46,11 @@ async def search_edges(
     limit: int = 5,
     include_expired: bool = False,
 ) -> list[tuple[EntityEdge, float]]:
-    """Search entity edges by semantic similarity on fact_embedding.
+    """DEPRECATED: Search entity edges by semantic similarity on fact_embedding.
+
+    WARNING: This queries PostgreSQL, but entity data has been migrated to Neo4j.
+    This function will return empty results unless embeddings are backfilled.
+    TODO: Implement Neo4j vector search.
 
     By default only returns active (non-expired) facts.
     """
@@ -116,7 +99,12 @@ async def search_edges(
 async def search_entities(
     session: AsyncSession, query: str, group_id: str, limit: int = 5
 ) -> list[tuple[Entity, float]]:
-    """Search entities by semantic similarity on summary_embedding."""
+    """DEPRECATED: Search entities by semantic similarity on summary_embedding.
+
+    WARNING: This queries PostgreSQL, but entity data has been migrated to Neo4j.
+    This function will return empty results unless embeddings are backfilled.
+    TODO: Implement Neo4j vector search.
+    """
     embeddings = get_embeddings([query], embedding_type="query")
     if not embeddings:
         return []
@@ -160,7 +148,11 @@ async def get_entity_facts(
     entity_id: uuid.UUID,
     active_only: bool = True,
 ) -> list[EntityEdge]:
-    """Get all facts (edges) related to an entity."""
+    """DEPRECATED: Get all facts (edges) related to an entity.
+
+    WARNING: This queries PostgreSQL, but entity relationship data has been migrated to Neo4j.
+    Use Neo4jGraphService.get_all_edges() instead.
+    """
     conditions = [
         (EntityEdge.source_entity_id == entity_id)
         | (EntityEdge.target_entity_id == entity_id),
@@ -182,7 +174,10 @@ async def get_entity_facts_at(
     entity_id: uuid.UUID,
     point_in_time: datetime,
 ) -> list[EntityEdge]:
-    """Time-travel query: get facts that were valid at a specific point in time.
+    """DEPRECATED: Time-travel query - get facts that were valid at a specific point in time.
+
+    WARNING: This queries PostgreSQL, but entity relationship data has been migrated to Neo4j.
+    TODO: Implement temporal query in Neo4j.
 
     A fact is valid at time T if:
       valid_at <= T AND (expired_at IS NULL OR expired_at > T)
