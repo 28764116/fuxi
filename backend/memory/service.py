@@ -31,6 +31,58 @@ async def ingest_episode(session: AsyncSession, data: EpisodeCreate, language: s
     return episode
 
 
+# --- Entity management (for temporal upsert compatibility) ---
+
+
+def get_or_create_entity(
+    session: Session,
+    group_id: str,
+    name: str,
+    entity_type: str,
+    summary: str = "",
+    display_name: str | None = None,
+) -> Entity:
+    """Get or create an entity by name (for temporal upsert).
+
+    WARNING: This function uses PostgreSQL entities table which is DEPRECATED.
+    New code should use Neo4jGraphService instead.
+    This is kept for backwards compatibility with temporal.py only.
+    """
+    # Normalize name
+    normalized_name = name.strip()
+
+    # Try to find existing entity
+    stmt = select(Entity).where(
+        Entity.group_id == group_id,
+        Entity.name == normalized_name,
+    )
+    existing = session.execute(stmt).scalars().first()
+
+    if existing:
+        # Update summary if provided and more detailed
+        if summary and (not existing.summary or len(summary) > len(existing.summary)):
+            existing.summary = summary
+            existing.updated_at = datetime.utcnow()
+        # Update display_name if provided
+        if display_name and not existing.display_name:
+            existing.display_name = display_name
+            existing.updated_at = datetime.utcnow()
+        return existing
+
+    # Create new entity
+    new_entity = Entity(
+        group_id=group_id,
+        name=normalized_name,
+        entity_type=entity_type,
+        summary=summary if summary else None,
+        display_name=display_name,
+    )
+    session.add(new_entity)
+    session.flush()
+
+    return new_entity
+
+
 # --- DEPRECATED: Entity dedup functions (migrated to Neo4j) ---
 # These functions are no longer used. Use Neo4jGraphService instead.
 

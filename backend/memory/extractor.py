@@ -386,6 +386,8 @@ def extract_triplets(content: str, context: str = "", goal: str = "", language: 
                    len(digit_chars) / len(alpha_chars) * 100)
         return []
 
+    logger.info(f"开始提取三元组，内容长度: {len(content)} 字符")
+
     client = OpenAI(api_key=settings.llm_api_key, base_url=settings.llm_base_url)
 
     # Build system prompt: inject language and goal
@@ -427,6 +429,7 @@ def extract_triplets(content: str, context: str = "", goal: str = "", language: 
         for attempt in range(max_retries):
             try:
                 # 尝试使用 JSON mode（参考 MiroFish）
+                logger.info(f"调用 LLM API (尝试 {attempt + 1}/{max_retries}), 模型: {settings.llm_model_name}, 超时: 90s")
                 response = client.chat.completions.create(
                     model=settings.llm_model_name,
                     messages=[
@@ -437,6 +440,7 @@ def extract_triplets(content: str, context: str = "", goal: str = "", language: 
                     timeout=90.0,
                     response_format={"type": "json_object"}  # 强制返回 JSON
                 )
+                logger.info("LLM API 调用成功")
                 break  # 成功，跳出重试循环
             except Exception as e:
                 # JSON mode 可能不支持，降级到普通模式

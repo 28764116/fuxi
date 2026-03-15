@@ -84,13 +84,21 @@ def process_document(
                 # 提取实体 (带上下文：前一个 chunk + 语言偏好)
                 context = chunks[i-1][:150] if i > 0 else ""
                 extract_start = time.time()
-                triplets = extract_triplets(chunk, context=context, language=language)
-                extract_time = time.time() - extract_start
+
+                try:
+                    logger.info(f"开始提取块 {i+1}/{total_chunks} (长度: {len(chunk)} 字符)")
+                    triplets = extract_triplets(chunk, context=context, language=language)
+                    extract_time = time.time() - extract_start
+                    logger.info(f"块 {i+1} 提取完成: {len(triplets)} 个三元组, 耗时 {extract_time:.1f}s")
+                except Exception as e:
+                    logger.error(f"块 {i+1} 提取失败: {e}", exc_info=True)
+                    triplets = []
+                    extract_time = time.time() - extract_start
 
                 # 更新进度（包含实时统计）
                 progress = 20 + int((i / total_chunks) * 70)
                 self.update_state(state='PROGRESS', meta={
-                    'stage': f'📝 处理块 {i+1}/{total_chunks}' + (f' ✓ 提取 {len(triplets)} 个三元组' if triplets else ''),
+                    'stage': f'📝 处理块 {i+1}/{total_chunks}' + (f' ✓ 提取 {len(triplets)} 个三元组' if triplets else ' (跳过)'),
                     'progress': progress,
                     'current': i + 1,
                     'total': total_chunks,

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { getEntities, getAllEdges, ingestText } from '../api'
 import { useToast } from '../composables/useToast'
@@ -19,6 +19,10 @@ const showSources = ref(true)
 const chatInput = ref('')
 const isProcessing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
+const processingStatus = ref('')
+const processingProgress = ref(0)
+let refreshInterval: number | null = null
+let uploadWs: WebSocket | null = null
 
 // 搜索过滤
 const filteredEntities = computed(() => {
@@ -37,6 +41,19 @@ const filteredEdges = computed(() => {
     allowedIds.has(e.source_entity_id) && allowedIds.has(e.target_entity_id)
   )
 })
+
+const hasSearchResults = computed(() => {
+  if (!searchQuery.value.trim()) return true
+  return filteredEntities.value.length > 0
+})
+
+const isEmpty = computed(() => {
+  return !isLoading.value && entities.value.length === 0
+})
+
+function clearSearch() {
+  searchQuery.value = ''
+}
 
 async function loadData() {
   try {
@@ -94,6 +111,30 @@ async function handleChatSubmit() {
   }
 }
 
+function startAutoRefresh() {
+  // 每3秒自动刷新一次数据
+  if (refreshInterval) clearInterval(refreshInterval)
+  refreshInterval = window.setInterval(async () => {
+    try {
+      const [ents, edgs] = await Promise.all([
+        getEntities(GROUP_ID),
+        getAllEdges(GROUP_ID)
+      ])
+      entities.value = ents
+      edges.value = edgs
+    } catch (e) {
+      console.error('自动刷新失败:', e)
+    }
+  }, 3000)
+}
+
+function stopAutoRefresh() {
+  if (refreshInterval) {
+    clearInterval(refreshInterval)
+    refreshInterval = null
+  }
+}
+
 async function handleFileUpload(e: Event) {
   const target = e.target as HTMLInputElement
   if (!target.files?.length || isProcessing.value) return
@@ -101,23 +142,55 @@ async function handleFileUpload(e: Event) {
   const file = target.files[0]
   const oldCount = entities.value.length
   isProcessing.value = true
+  processingProgress.value = 0
 
   try {
     toast.info(`📤 正在上传 ${file.name}...`)
-    const { uploadFile } = await import('../api')
-    await uploadFile(GROUP_ID, THREAD_ID, file)
+    const { uploadFile, connectUploadWs } = await import('../api')
+    const response = await uploadFile(GROUP_ID, THREAD_ID, file)
 
-    const [ents, edgs] = await Promise.all([
-      getEntities(GROUP_ID),
-      getAllEdges(GROUP_ID)
-    ])
-    entities.value = ents
-    edges.value = edgs
+    const taskId = response.task_id
+    processingStatus.value = '正在解析文档...'
 
-    const newCount = ents.length - oldCount
-    toast.success(`✓ 文件处理完成，新增 ${newCount} 个实体`)
+    // 建立 WebSocket 连接监听进度
+    uploadWs = connectUploadWs(
+      taskId,
+      (data) => {
+        console.log('收到进度更新:', data)
+        if (data.state === 'PROGRESS') {
+          processingStatus.value = data.stage || '处理中...'
+          processingProgress.value = data.progress || 0
+        } else if (data.state === 'SUCCESS') {
+          processingStatus.value = '处理完成'
+          processingProgress.value = 100
+          stopAutoRefresh()
+          uploadWs?.close()
+
+          // 最后刷新一次
+          loadData().then(() => {
+            const newCount = entities.value.length - oldCount
+            toast.success(`✓ 文件处理完成，新增 ${newCount} 个实体`)
+            isProcessing.value = false
+          })
+        } else if (data.state === 'FAILURE') {
+          stopAutoRefresh()
+          uploadWs?.close()
+          toast.error(`✗ 处理失败: ${data.error || '未知错误'}`)
+          isProcessing.value = false
+        }
+      },
+      () => {
+        // WebSocket 关闭
+        stopAutoRefresh()
+      }
+    )
+
+    // 开始自动刷新数据
+    startAutoRefresh()
+
   } catch (e: any) {
     console.error(e)
+    stopAutoRefresh()
     let errorMsg = '上传失败'
     const status = e.response?.status
 
@@ -132,13 +205,21 @@ async function handleFileUpload(e: Event) {
     }
 
     toast.error(`✗ ${errorMsg}`)
-  } finally {
     isProcessing.value = false
+  } finally {
     target.value = ''
   }
 }
 
 onMounted(loadData)
+
+onUnmounted(() => {
+  stopAutoRefresh()
+  if (uploadWs) {
+    uploadWs.close()
+    uploadWs = null
+  }
+})
 </script>
 
 <template>
@@ -166,6 +247,11 @@ onMounted(loadData)
             <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
           </svg>
           <input v-model="searchQuery" placeholder="搜索实体或关系" />
+          <button v-if="searchQuery" class="btn-clear" @click="clearSearch" title="清除搜索">
+            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+          </button>
         </div>
       </div>
 
@@ -177,6 +263,17 @@ onMounted(loadData)
         <button class="btn-lang">EN</button>
       </div>
     </header>
+
+    <!-- 处理进度条 -->
+    <div v-if="isProcessing && processingProgress > 0" class="progress-bar">
+      <div class="progress-info">
+        <span class="progress-text">{{ processingStatus }}</span>
+        <span class="progress-percent">{{ processingProgress }}%</span>
+      </div>
+      <div class="progress-track">
+        <div class="progress-fill" :style="{ width: processingProgress + '%' }"></div>
+      </div>
+    </div>
 
     <div class="main-content">
       <!-- 左侧来源面板 -->
@@ -223,6 +320,31 @@ onMounted(loadData)
             <p>加载中...</p>
           </div>
 
+          <!-- 空状态 -->
+          <div v-else-if="isEmpty" class="empty-state">
+            <svg width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+              <circle cx="32" cy="32" r="28"/>
+              <circle cx="22" cy="28" r="4"/>
+              <circle cx="42" cy="28" r="4"/>
+              <circle cx="32" cy="42" r="4"/>
+              <line x1="22" y1="28" x2="32" y2="42"/>
+              <line x1="42" y1="28" x2="32" y2="42"/>
+            </svg>
+            <h3>开始构建知识图谱</h3>
+            <p>在下方输入文本或上传文档，系统将自动提取实体和关系</p>
+          </div>
+
+          <!-- 搜索无结果 -->
+          <div v-else-if="!hasSearchResults" class="empty-state">
+            <svg width="64" height="64" fill="none" stroke="currentColor" stroke-width="1.5" opacity="0.3">
+              <circle cx="32" cy="28" r="18"/>
+              <line x1="44" y1="40" x2="54" y2="50"/>
+              <line x1="22" y1="22" x2="42" y2="34"/>
+            </svg>
+            <h3>未找到匹配结果</h3>
+            <p>尝试使用其他关键词搜索</p>
+          </div>
+
           <!-- 图谱 -->
           <div v-else class="graph-container">
             <GraphView
@@ -230,6 +352,14 @@ onMounted(loadData)
               :edges="filteredEdges"
               :loading="isLoading"
             />
+
+            <!-- 处理中遮罩 -->
+            <div v-if="isProcessing" class="processing-overlay">
+              <div class="processing-indicator">
+                <div class="spinner"></div>
+                <p>实时渲染中...</p>
+              </div>
+            </div>
           </div>
 
           <!-- 展开按钮 -->
@@ -253,13 +383,21 @@ onMounted(loadData)
               }"
             ></textarea>
             <div class="input-actions">
-              <button class="btn-action btn-upload" :disabled="isProcessing" @click="fileInput?.click()" title="上传文件">
-                <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <button class="btn-action btn-upload" :disabled="isProcessing" @click="fileInput?.click()" title="上传文件 (PDF, TXT, MD)">
+                <svg v-if="!isProcessing" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                </svg>
+                <svg v-else class="spinner" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="9" cy="9" r="8" opacity="0.25"/>
+                  <path d="M9 1a8 8 0 018 8" stroke-linecap="round"/>
                 </svg>
               </button>
               <button class="btn-action btn-submit" :disabled="!chatInput.trim() || isProcessing" @click="handleChatSubmit">
-                <span v-if="isProcessing">处理中...</span>
+                <svg v-if="isProcessing" class="spinner" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="8" cy="8" r="7" opacity="0.25"/>
+                  <path d="M8 1a7 7 0 017 7" stroke-linecap="round"/>
+                </svg>
+                <span v-if="isProcessing">处理中</span>
                 <span v-else>提交</span>
               </button>
             </div>
@@ -306,18 +444,20 @@ onMounted(loadData)
   display: flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dadce0;
   background: white;
-  border-radius: 6px;
-  color: #6b7280;
+  border-radius: 8px;
+  color: #5f6368;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
 }
 
 .btn-back:hover {
-  background: #f9fafb;
-  border-color: #d1d5db;
-  color: #111827;
+  background: #f8f9fa;
+  border-color: #dadce0;
+  color: #202124;
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
 
 .breadcrumb {
@@ -325,31 +465,31 @@ onMounted(loadData)
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: #6b7280;
+  color: #5f6368;
   font-weight: 500;
 }
 
 .breadcrumb span {
   cursor: pointer;
-  transition: all 0.2s;
-  padding: 2px 4px;
-  border-radius: 4px;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  padding: 4px 8px;
+  border-radius: 12px;
 }
 
 .breadcrumb span:hover:not(.active) {
-  color: #3b82f6;
-  background: rgba(59, 130, 246, 0.08);
+  color: #1a73e8;
+  background: rgba(26, 115, 232, 0.08);
 }
 
 .breadcrumb span.active {
-  color: #111827;
+  color: #202124;
   font-weight: 600;
 }
 
 .breadcrumb svg {
   width: 12px;
   height: 12px;
-  color: #cbd5e1;
+  color: #dadce0;
   flex-shrink: 0;
 }
 
@@ -361,19 +501,23 @@ onMounted(loadData)
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 0 12px;
-  height: 36px;
+  padding: 0 14px;
+  height: 40px;
   background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  transition: all 0.2s;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  border: 1px solid #dadce0;
+  border-radius: 24px;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+}
+
+.search-box:hover {
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
 
 .search-box:focus-within {
   background: white;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
+  border-color: #1a73e8;
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 6px 2px rgba(26, 115, 232, 0.3);
 }
 
 .search-box input:focus {
@@ -398,6 +542,32 @@ onMounted(loadData)
   color: #9ca3af;
 }
 
+.btn-clear {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  color: #80868b;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.btn-clear:hover {
+  background: #f1f3f4;
+  color: #202124;
+}
+
+.btn-clear svg {
+  width: 14px;
+  height: 14px;
+}
+
 .top-right {
   display: flex;
   align-items: center;
@@ -408,32 +578,40 @@ onMounted(loadData)
   display: flex;
   gap: 12px;
   font-size: 13px;
-  color: #6b7280;
-  font-weight: 600;
+  color: #5f6368;
+  font-weight: 500;
 }
 
 .stats span {
-  padding: 4px 10px;
+  padding: 6px 12px;
   background: white;
-  border: 1px solid #e5e7eb;
-  border-radius: 6px;
+  border: 1px solid #dadce0;
+  border-radius: 16px;
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stats span:hover {
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
 
 .btn-lang {
   padding: 6px 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dadce0;
   background: white;
-  border-radius: 6px;
+  border-radius: 16px;
   font-size: 13px;
-  font-weight: 600;
-  color: #6b7280;
+  font-weight: 500;
+  color: #5f6368;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
 }
 
 .btn-lang:hover {
-  border-color: #d1d5db;
-  color: #111827;
+  border-color: #dadce0;
+  color: #202124;
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
 
 /* ===== 主内容区 ===== */
@@ -470,15 +648,15 @@ onMounted(loadData)
   justify-content: center;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  color: #6b7280;
+  border-radius: 8px;
+  color: #5f6368;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .btn-toggle:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: #f1f3f4;
+  color: #202124;
 }
 
 .panel-title {
@@ -487,23 +665,23 @@ onMounted(loadData)
   align-items: center;
   gap: 8px;
   font-size: 14px;
-  font-weight: 600;
-  color: #111827;
+  font-weight: 500;
+  color: #202124;
 }
 
 .panel-title svg {
-  color: #6b7280;
+  color: #5f6368;
   width: 16px;
   height: 16px;
 }
 
 .count {
-  padding: 1px 7px;
-  background: #f3f4f6;
-  border-radius: 10px;
+  padding: 2px 8px;
+  background: #f1f3f4;
+  border-radius: 12px;
   font-size: 11px;
-  font-weight: 600;
-  color: #6b7280;
+  font-weight: 500;
+  color: #5f6368;
   line-height: 1.5;
 }
 
@@ -515,15 +693,15 @@ onMounted(loadData)
   justify-content: center;
   border: none;
   background: transparent;
-  border-radius: 6px;
-  color: #6b7280;
+  border-radius: 8px;
+  color: #5f6368;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .btn-filter:hover {
-  background: #f3f4f6;
-  color: #111827;
+  background: #f1f3f4;
+  color: #202124;
 }
 
 .sources-list {
@@ -565,22 +743,23 @@ onMounted(loadData)
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 12px;
   flex: 1;
-  color: #9ca3af;
+  color: #80868b;
   font-size: 13px;
   padding: 32px 20px;
   text-align: center;
 }
 
 .empty svg {
-  opacity: 0.4;
+  opacity: 0.3;
+  color: #80868b;
 }
 
 .empty p {
   margin: 0;
-  font-weight: 500;
-  color: #6b7280;
+  font-weight: 400;
+  color: #5f6368;
 }
 
 .source-item {
@@ -722,20 +901,72 @@ onMounted(loadData)
   align-items: center;
   justify-content: center;
   background: white;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  color: #6b7280;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
+  color: #5f6368;
   cursor: pointer;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
-  transition: all 0.2s;
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 10;
 }
 
 .btn-expand:hover {
-  background: #f9fafb;
-  border-color: #9ca3af;
-  color: #111827;
-  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.12);
+  background: #f8f9fa;
+  border-color: #dadce0;
+  color: #202124;
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
+}
+
+/* ===== 处理进度条 ===== */
+.progress-bar {
+  padding: 10px 20px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e5e7eb;
+  flex-shrink: 0;
+  animation: slideDown 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+
+.progress-text {
+  color: #202124;
+  font-weight: 500;
+}
+
+.progress-percent {
+  color: #5f6368;
+  font-weight: 500;
+}
+
+.progress-track {
+  height: 6px;
+  background: #f1f3f4;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #1a73e8 0%, #4285f4 100%);
+  border-radius: 3px;
+  transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ===== 底部输入栏 ===== */
@@ -760,35 +991,35 @@ onMounted(loadData)
   height: 36px;
   max-height: 100px;
   padding: 8px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  border: 1px solid #dadce0;
+  border-radius: 8px;
   font-size: 13px;
   line-height: 1.5;
   resize: none;
   font-family: inherit;
   background: white;
-  color: #111827;
-  transition: all 0.2s;
+  color: #202124;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
   overflow-y: auto;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
 }
 
 .input-container textarea:focus {
   outline: none;
   background: white;
-  border-color: #9ca3af;
-  box-shadow: 0 0 0 2px rgba(156, 163, 175, 0.15);
+  border-color: #1a73e8;
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 6px 2px rgba(26, 115, 232, 0.3);
 }
 
 .input-container textarea:disabled {
-  background: #f9fafb;
-  color: #9ca3af;
+  background: #f8f9fa;
+  color: #80868b;
   cursor: not-allowed;
-  border-color: #e5e7eb;
+  border-color: #e8eaed;
 }
 
 .input-container textarea::placeholder {
-  color: #9ca3af;
+  color: #80868b;
 }
 
 .input-actions {
@@ -800,11 +1031,11 @@ onMounted(loadData)
   height: 36px;
   padding: 0 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: 18px;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 200ms cubic-bezier(0.4, 0, 0.2, 1);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -814,15 +1045,16 @@ onMounted(loadData)
 .btn-upload {
   min-width: 36px;
   background: white;
-  border: 1px solid #d1d5db;
-  color: #6b7280;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  border: 1px solid #dadce0;
+  color: #5f6368;
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
 }
 
 .btn-upload:hover:not(:disabled) {
-  background: #f9fafb;
-  border-color: #9ca3af;
-  color: #111827;
+  background: #f8f9fa;
+  border-color: #dadce0;
+  color: #202124;
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
 
 .btn-upload svg {
@@ -832,26 +1064,116 @@ onMounted(loadData)
 
 .btn-submit {
   min-width: 60px;
-  background: #111827;
+  background: #1a73e8;
   color: white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px 0 rgba(60, 64, 67, 0.3), 0 1px 3px 1px rgba(60, 64, 67, 0.15);
+  border: none;
 }
 
 .btn-submit:hover:not(:disabled) {
-  background: #1f2937;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+  background: #1765cc;
+  box-shadow: 0 1px 3px 0 rgba(60, 64, 67, 0.3), 0 4px 8px 3px rgba(60, 64, 67, 0.15);
 }
 
 .btn-upload:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #f3f4f6;
-  border-color: #e5e7eb;
+  background: #f8f9fa;
+  border-color: #e8eaed;
 }
 
 .btn-submit:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #9ca3af;
+  background: #80868b;
+}
+
+/* ===== 空状态 ===== */
+.empty-state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px;
+  text-align: center;
+  background: #ffffff;
+}
+
+.empty-state svg {
+  color: #80868b;
+}
+
+.empty-state h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 500;
+  color: #202124;
+}
+
+.empty-state p {
+  margin: 0;
+  font-size: 14px;
+  color: #5f6368;
+  max-width: 400px;
+  line-height: 1.5;
+}
+
+/* ===== 处理中遮罩 ===== */
+.processing-overlay {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  padding: 20px;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.processing-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #dadce0;
+  border-radius: 24px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  backdrop-filter: blur(8px);
+  animation: fadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.processing-indicator p {
+  margin: 0;
+  font-size: 13px;
+  color: #5f6368;
+  font-weight: 500;
+}
+
+/* ===== Loading 动画 ===== */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.processing-indicator .spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #f1f3f4;
+  border-top-color: #1a73e8;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
 }
 </style>
