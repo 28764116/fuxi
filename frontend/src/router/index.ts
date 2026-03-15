@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import Home from '../views/Home.vue'
 import Projects from '../views/Projects.vue'
 import LiveGraphBuilder from '../views/LiveGraphBuilder.vue'
+import GraphExplorer from '../views/GraphExplorer.vue'
 
 const routes = [
   {
@@ -17,6 +18,11 @@ const routes = [
   {
     path: '/project/:id',
     name: 'project',
+    component: GraphExplorer,
+  },
+  {
+    path: '/live/:id',
+    name: 'live',
     component: LiveGraphBuilder,
   },
 ]
