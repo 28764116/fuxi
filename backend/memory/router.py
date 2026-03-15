@@ -34,6 +34,7 @@ from memory.service import (
 )
 
 router = APIRouter(prefix="/memory", tags=["memory"], dependencies=[Depends(require_api_key)])
+ws_router = APIRouter(prefix="/memory", tags=["memory-ws"])  # WebSocket router without auth dependency
 
 
 # ---- Projects ----
@@ -389,8 +390,11 @@ async def get_upload_status(task_id: str):
     return response
 
 
-@router.websocket("/ws/upload/{task_id}")
-async def websocket_upload_progress(websocket: WebSocket, task_id: str):
+@ws_router.websocket("/ws/upload/{task_id}")
+async def websocket_upload_progress(
+    websocket: WebSocket,
+    task_id: str,
+):
     """WebSocket endpoint for real-time document processing progress.
 
     前端连接后，实时推送处理进度：

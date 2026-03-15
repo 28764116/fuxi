@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.init_db import init_db
-from memory.router import router as memory_router
+from memory.router import router as memory_router, ws_router as memory_ws_router
 from simulation.router import router as simulation_router
 from graph.router import router as graph_router
 
@@ -45,6 +45,7 @@ app.add_middleware(
 )
 
 app.include_router(memory_router, prefix="/api")
+app.include_router(memory_ws_router, prefix="/api")  # WebSocket routes without auth
 app.include_router(simulation_router, prefix="/api")
 app.include_router(graph_router, prefix="/api")
 
