@@ -15,7 +15,7 @@ const entities = ref<any[]>([])
 const edges = ref<any[]>([])
 const isLoading = ref(true)
 const searchQuery = ref('')
-const showSources = ref(true)
+const showSources = ref(false)  // 默认隐藏空的来源面板
 const chatInput = ref('')
 const isProcessing = ref(false)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -423,12 +423,13 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 52px;
-  padding: 0 16px;
-  background: #fafbfc;
-  border-bottom: 1px solid #e5e7eb;
+  height: 56px;
+  padding: 0 20px;
+  background: white;
+  border-bottom: 1px solid #e8eaed;
   gap: 20px;
   flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(60, 64, 67, 0.08);
 }
 
 .top-left {
@@ -818,7 +819,7 @@ onUnmounted(() => {
 .canvas-wrapper {
   flex: 1;
   position: relative;
-  background: #ffffff;
+  background: linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%);
   overflow: hidden;
   min-height: 0;
   max-height: 100%;
@@ -919,9 +920,8 @@ onUnmounted(() => {
 
 /* ===== 处理进度条 ===== */
 .progress-bar {
-  padding: 10px 20px;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 16px 24px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   flex-shrink: 0;
   animation: slideDown 300ms cubic-bezier(0.4, 0, 0.2, 1);
 }
@@ -941,41 +941,52 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
   font-size: 13px;
 }
 
 .progress-text {
-  color: #202124;
+  color: white;
   font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.progress-text::before {
+  content: '⚡';
+  font-size: 16px;
 }
 
 .progress-percent {
-  color: #5f6368;
-  font-weight: 500;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  font-size: 14px;
 }
 
 .progress-track {
-  height: 6px;
-  background: #f1f3f4;
-  border-radius: 3px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #1a73e8 0%, #4285f4 100%);
-  border-radius: 3px;
+  background: white;
+  border-radius: 2px;
   transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.5);
 }
 
 /* ===== 底部输入栏 ===== */
 .input-bar {
-  padding: 12px 20px;
-  background: #fafbfc;
-  border-top: 1px solid #e5e7eb;
+  padding: 16px 20px;
+  background: white;
+  border-top: 1px solid #e8eaed;
   flex-shrink: 0;
   min-height: 0;
+  box-shadow: 0 -1px 3px rgba(60, 64, 67, 0.08);
 }
 
 .input-container {
@@ -1096,21 +1107,26 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
+  gap: 20px;
   padding: 40px;
   text-align: center;
-  background: #ffffff;
+  background: linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%);
 }
 
 .empty-state svg {
-  color: #80868b;
+  color: #667eea;
+  opacity: 0.6;
 }
 
 .empty-state h3 {
   margin: 0;
-  font-size: 16px;
-  font-weight: 500;
+  font-size: 18px;
+  font-weight: 600;
   color: #202124;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
 }
 
 .empty-state p {
@@ -1118,15 +1134,14 @@ onUnmounted(() => {
   font-size: 14px;
   color: #5f6368;
   max-width: 400px;
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 /* ===== 处理中遮罩 ===== */
 .processing-overlay {
   position: absolute;
-  bottom: 0;
-  right: 0;
-  padding: 20px;
+  bottom: 20px;
+  right: 20px;
   z-index: 100;
   pointer-events: none;
 }
@@ -1134,21 +1149,29 @@ onUnmounted(() => {
 .processing-indicator {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 20px;
-  background: rgba(255, 255, 255, 0.95);
-  border: 1px solid #dadce0;
-  border-radius: 24px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
-  backdrop-filter: blur(8px);
-  animation: fadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1);
+  gap: 10px;
+  padding: 10px 18px;
+  background: linear-gradient(135deg, rgba(102, 126, 234, 0.95) 0%, rgba(118, 75, 162, 0.95) 100%);
+  border-radius: 20px;
+  box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+  backdrop-filter: blur(10px);
+  animation: fadeIn 300ms cubic-bezier(0.4, 0, 0.2, 1), pulse 2s ease-in-out infinite;
 }
 
 .processing-indicator p {
   margin: 0;
   font-size: 13px;
-  color: #5f6368;
+  color: white;
   font-weight: 500;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+  }
+  50% {
+    box-shadow: 0 4px 30px rgba(102, 126, 234, 0.6);
+  }
 }
 
 /* ===== Loading 动画 ===== */
@@ -1171,8 +1194,8 @@ onUnmounted(() => {
 .processing-indicator .spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid #f1f3f4;
-  border-top-color: #1a73e8;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: white;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
